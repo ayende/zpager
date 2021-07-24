@@ -1,5 +1,4 @@
 const std = @import("std");
-const lazy = @import("Lazy.zig");
 const IO_Uring = std.os.linux.IO_Uring;
 
 pub const FileRing = struct {

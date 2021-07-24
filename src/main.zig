@@ -1,16 +1,24 @@
 const std = @import("std");
-const ring = @import("FileRing.zig");
+const files = @import("files/Pager.zig");
 
 pub fn main() anyerror!void {
-    var r = try ring.FileRing.init("/tmp/file-ring-test", std.heap.page_allocator);
-    defer r.deinit();
+    var pager = try files.FilePager.init("/tmp/file-ring-test", 1024 * 1024, std.heap.page_allocator);
+    var i: usize = 0;
+    while (i < 3) {
+        i += 1;
+        var page = try pager.get_page(0, 1);
+        std.log.debug("{s}", .{page});
+    }
 
-    var args: TestReadArgs = .{ .done = .{}, .buffer = undefined };
+    // var r = try files.FileRing.init("/tmp/file-ring-test", std.heap.page_allocator);
+    // defer r.deinit();
 
-    try r.read(0, 12, test_read_callback, @ptrToInt(&args));
+    // var args: TestReadArgs = .{ .done = .{}, .buffer = undefined };
 
-    args.done.wait();
-    std.log.debug("got: {s}", .{args.buffer});
+    // try r.read(0, 12, test_read_callback, @ptrToInt(&args));
+
+    // args.done.wait();
+    // std.log.debug("got: {s}", .{args.buffer});
 }
 
 const TestReadArgs = struct {
