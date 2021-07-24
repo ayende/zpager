@@ -13,6 +13,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable("pager", "src/main.zig");
     exe.setTarget(target);
+    //exe.linkLibC();
     exe.setBuildMode(mode);
     exe.install();
 
