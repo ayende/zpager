@@ -9,15 +9,17 @@ pub fn Lazy(comptime T: type) type {
 
         data: AtomicRef,
 
-        pub fn should_init(self: *SelfLazy) bool {
-            comptime if (@sizeOf(T) != @sizeOf(usize)) {
+        comptime {
+            if (@sizeOf(T) != @sizeOf(usize)) {
                 @compileError("Lazy can only accept pointer size types");
-            };
+            }
 
-            comptime if (@sizeOf(Reference) != @sizeOf(u128)) {
+            if (@sizeOf(Reference) != @sizeOf(u128)) {
                 @compileError("Lazy ref *must* be 128bits excatly");
-            };
+            }
+        }
 
+        pub fn should_init(self: *SelfLazy) bool {
             var cur = self.data;
             if (cur.data.val != null) {
                 return false; //initialized already
@@ -31,7 +33,7 @@ pub fn Lazy(comptime T: type) type {
         }
 
         pub fn has_value(self: *SelfLazy) bool {
-            return self.data.val != null;
+            return self.data.data.val != null;
         }
 
         pub fn release(self: *SelfLazy) void {

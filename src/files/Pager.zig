@@ -1,7 +1,7 @@
 const std = @import("std");
 const lazy = @import("../Lazy.zig");
 const files = @import("Ring.zig");
-const utils = @import("../utils/AtomicBitmap.zig");
+const utils = @import("../utils.zig");
 
 const testing = std.testing;
 
@@ -19,14 +19,18 @@ pub const FilePager = struct {
     map: []lazy.Lazy([*]u8),
     allocator: *std.mem.Allocator,
     file: *files.FileRing,
-    accessed: utils.AtomicBitmap,
+    accessed: utils.atomic_bitmap,
+    disjoint_rwl: utils.read_write_lock,
+    disjoint_map: std.AutoHashMap(u64, *lazy.Lazy([*]u8)),
 
     pub fn init(path: []const u8, max_size: u64, allocator: *std.mem.Allocator) !*FilePager {
         const self = try allocator.create(FilePager);
         errdefer allocator.destroy(self);
         self.allocator = allocator;
 
-        self.accessed = utils.AtomicBitmap{ .data = try allocator.alloc(u64, MaxNumberOfPages) };
+        self.disjoint_map = std.AutoHashMap(u64, *lazy.Lazy([*]u8)).init(self.allocator);
+        self.disjoint_rwl.init();
+        self.accessed = .{ .data = try allocator.alloc(u64, MaxNumberOfPages) };
         errdefer allocator.free(self.accessed.data);
 
         self.map = try allocator.alloc(lazy.Lazy([*]u8), BlockMapLength);
@@ -55,6 +59,21 @@ pub const FilePager = struct {
     pub fn try_page(self: *FilePager, page_num: u64, number_of_pages: u32) !?[]const u8 {
         const block_num = page_num / BlockSize;
         const page_in_block = page_num % BlockSize;
+
+        const end_block_num = (page_num + number_of_pages) / BlockSize;
+        if (end_block_num != block_num) { // this is a disjoint read
+            // if (try try_page(block_num * BlockSize, 1) == null)
+            //     return null;// we *require* that the parent
+            var held = self.disjoint_rwl.reader();
+            defer held.release();
+
+            if (self.disjoint_map.get(page_num)) |p| {
+                if (p.has_value() == false)
+                    return null;
+                return p.get();
+            }
+        }
+
         if (self.map[block_num].has_value() == false)
             return null;
         var block = self.map[block_num].get();
@@ -71,10 +90,51 @@ pub const FilePager = struct {
         lazy_val.init(buf.ptr);
     }
 
+    fn get_disjointed(self: *FilePager, page_num: u64, number_of_pages: u32) ![]const u8 {
+        { // read lock scope
+            var rheld = self.disjoint_rwl.reader();
+            defer rheld.release();
+            if (self.disjoint_map.get(page_num)) |p| {
+                if (p.has_value()) {
+                    var buf = try p.get();
+                    return buf[0 .. number_of_pages * PageSize];
+                }
+            }
+        }
+
+        var should_init: bool = undefined;
+
+        var lazy_val: *lazy.Lazy([*]u8) = undefined;
+        { // write lock scope
+            var wheld = self.disjoint_rwl.writer();
+            defer wheld.release();
+            if (self.disjoint_map.get(page_num)) |p| { // already here, someone else intiailizing...
+                should_init = false;
+                lazy_val = p;
+            } else {
+                lazy_val = try self.allocator.create(lazy.Lazy([*]u8));
+                errdefer self.allocator.destroy(lazy_val);
+                lazy_val.data.data = .{ .version = 1, .references = 0, .val = null };
+                try self.disjoint_map.put(page_num, lazy_val);
+                should_init = true;
+            }
+        }
+        if (should_init) {
+            try self.file.read(page_num * PageSize, number_of_pages * PageSize, complete_read, @ptrToInt(lazy_val));
+        }
+        var buf = try lazy_val.get();
+        return buf[0 .. number_of_pages * PageSize];
+    }
+
     pub fn get_page(self: *FilePager, page_num: u64, number_of_pages: u32) ![]const u8 {
         std.debug.assert(number_of_pages == 1); // for now
         const block_num = page_num / BlockSize;
         const page_in_block = page_num % BlockSize;
+        const end_block_num = (page_num + number_of_pages) / BlockSize;
+        if (end_block_num != block_num) { // this is a disjoint read
+            return self.get_disjointed(page_num, number_of_pages);
+        }
+
         if (self.map[block_num].should_init()) {
             errdefer {
                 self.map[block_num].reset();
