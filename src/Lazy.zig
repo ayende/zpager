@@ -3,7 +3,8 @@ const std = @import("std");
 pub fn Lazy(comptime T: type) type {
     return struct {
         const Reference = extern struct { val: ?T, references: u32, version: u32 };
-        const AtomicRef = extern union { data: Reference, raw: u128 };
+        const Error = extern struct { reserved: ?T, marker: u32, err: u16 };
+        const AtomicRef = extern union { data: Reference, err: Error, raw: u128 };
 
         const SelfLazy = @This();
 
@@ -47,13 +48,15 @@ pub fn Lazy(comptime T: type) type {
             }
         }
 
-        pub fn reset(self: *SelfLazy) void {
+        pub fn opps(self: *SelfLazy, err: anyerror) void {
             while (true) {
                 var cur = self.data;
-                var update = std.mem.zeroes(AtomicRef);
+                var update = AtomicRef{ .err = .{ .reserved = undefined, .marker = std.math.maxInt(u32), .err = @errorToInt(err) } };
                 var result = @cmpxchgWeak(u128, &self.data.raw, cur.raw, update.raw, .Monotonic, .Monotonic);
-                if (result == null)
-                    break;
+                if (result != null)
+                    continue;
+                std.Thread.Futex.wake(@ptrCast(*std.atomic.Atomic(u32), &self.data.data.references), std.math.maxInt(u32));
+                return;
             }
         }
 
@@ -68,6 +71,9 @@ pub fn Lazy(comptime T: type) type {
                     if (result != null)
                         continue;
                     return val; // we have new reference...
+                }
+                if (cur.data.references == std.math.maxInt(u32)) { // marked as error
+                    return @intToError(cur.err.err);
                 }
                 try std.Thread.Futex.wait(@ptrCast(*std.atomic.Atomic(u32), &self.data.data.references), 0, null);
             }
