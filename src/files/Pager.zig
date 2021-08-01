@@ -240,9 +240,10 @@ pub const FilePager = struct {
 
     pub fn get_page(self: *FilePager, page_num: u64, number_of_pages: u32) ![]const u8 {
         std.debug.assert(number_of_pages == 1); // for now
-        const block_num = page_num / BlockSize;
-        const page_in_block = page_num % BlockSize;
-        const end_block_num = (page_num + number_of_pages) / BlockSize;
+        const pos_in_bytes = page_num * PageSize;
+        const block_num = pos_in_bytes / BlockSize;
+        const size_in_bytes = number_of_pages * PageSize;
+        const end_block_num = (pos_in_bytes + size_in_bytes) / BlockSize;
         if (end_block_num != block_num) { // this is a disjoint read
             return self.get_disjointed(page_num, number_of_pages);
         }
@@ -253,7 +254,8 @@ pub const FilePager = struct {
 
         var block = try self.map[block_num].get();
         self.accessed[self.current_access_idx % NumberOfAccessGenerations].set(page_num);
-        return block[page_in_block * PageSize .. PageSize * number_of_pages];
+        const page_in_block = pos_in_bytes % BlockSize;
+        return block[page_in_block..size_in_bytes];
     }
 };
 
