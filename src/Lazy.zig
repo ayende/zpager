@@ -38,13 +38,13 @@ pub fn Lazy(comptime T: type) type {
         }
 
         pub fn release(self: *SelfLazy) void {
-            std.debug.assert(self.data.val != null);
+            std.debug.assert(self.data.data.val != null);
             while (true) {
-                var cur: SelfLazy = self.*;
+                var cur: AtomicRef = self.data;
                 var update = cur;
                 update.data.version +%= 1;
                 update.data.references -= 1;
-                var result = @cmpxchgWeak(u128, self, cur.raw, update.raw, .Monotonic, .Monotonic);
+                var result = @cmpxchgWeak(u128, &self.data.raw, cur.raw, update.raw, .Monotonic, .Monotonic);
                 if (result == null)
                     break; // successfully updated
             }

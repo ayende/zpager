@@ -62,6 +62,13 @@ pub const FileRing = struct {
         self.file.close();
     }
 
+    pub fn release(self: *FileRing, buffer: []u8) !void {
+        if (std.mem.isAligned(@ptrToInt(buffer.ptr), OsPageSize) and std.mem.isAligned(buffer.len, OsPageSize)) {
+            try std.os.mprotect(@alignCast(OsPageSize, buffer), std.os.PROT_READ | std.os.PROT_WRITE);
+        }
+        self.allocator.free(buffer);
+    }
+
     pub fn read(self: *FileRing, position: u64, size: u32, callback: CallbackFn, user_data: u64) !void {
         {
             var req = try self.allocator.create(ReadPageReq);

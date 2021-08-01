@@ -154,7 +154,7 @@ pub const FilePager = struct {
             if (self.map[free.items[idx]].reset() == false)
                 continue;
             if (cur.data.data.val) |val| {
-                self.allocator.free(val[0..BlockSize]);
+                try self.file.release(val[0..BlockSize]);
                 freed += BlockSize;
                 var current_used = @atomicRmw(u64, &self.size_used.value, .Sub, BlockSize, .SeqCst) - BlockSize;
                 if (current_used < self.limits.self_soft)
@@ -249,6 +249,9 @@ pub const FilePager = struct {
         }
 
         if (self.map[block_num].should_init()) {
+            errdefer { // if we can't init, reset access
+                _ = self.map[block_num].reset();
+            }
             try self.read_from_disk(block_num);
         }
 
@@ -290,6 +293,10 @@ pub fn test_will_refuse_to_use_too_much_mem() !void {
     try testing.expect(pager.size_used.loadUnchecked() == 2 * Megabytes); // same block, no extra mem
 
     try testing.expectError(error.OutOfMemory, pager.get_page(257, 1) catch |e| e);
+
+    pager.let_go(0, 1);
+    pager.let_go(1, 1); // freed all references
+    _ = try pager.get_page(257, 1); // should get the successfully
 }
 
 test "will refuse to use too much mem" {
